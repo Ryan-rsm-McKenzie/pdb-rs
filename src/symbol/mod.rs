@@ -243,6 +243,8 @@ pub enum SymbolData<'t> {
     CallSiteInfo(CallSiteInfoSymbol),
     ///
     Caller(CallerSymbol),
+    /// Heap allocation site.
+    HeapAllocationSite(HeapAllocationSiteSymbol),
 }
 
 impl<'t> SymbolData<'t> {
@@ -287,6 +289,7 @@ impl<'t> SymbolData<'t> {
             Self::FrameProcedure(_) => None,
             Self::CallSiteInfo(_) => None,
             Self::Caller(_) => None,
+            Self::HeapAllocationSite(_) => None,
         }
     }
 }
@@ -359,6 +362,7 @@ impl<'t> TryFromCtx<'t> for SymbolData<'t> {
             S_FRAMEPROC => SymbolData::FrameProcedure(buf.parse_with(kind)?),
             S_CALLSITEINFO => SymbolData::CallSiteInfo(buf.parse_with(kind)?),
             S_CALLEES | S_CALLERS | S_INLINEES => SymbolData::Caller(buf.parse_with(kind)?),
+            S_HEAPALLOCSITE => SymbolData::HeapAllocationSite(buf.parse_with(kind)?),
             other => return Err(Error::UnimplementedSymbolKind(other)),
         };
 
@@ -2176,6 +2180,36 @@ impl<'t> TryFromCtx<'t, SymbolKind> for CallerSymbol {
         }
 
         let symbol = Self { indices };
+
+        Ok((symbol, buf.pos()))
+    }
+}
+
+/// https://github.com/microsoft/microsoft-pdb/blob/805655a28bd8198004be2ac27e6e0290121a5e89/include/cvinfo.h#L4500
+/// Heap allocation site
+///
+/// Symbol kind `S_HEAPALLOCSITE`
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HeapAllocationSiteSymbol {
+    /// offset of call site
+    pub offset: PdbInternalSectionOffset,
+    /// length of heap allocation call instruction
+    pub size: u16,
+    /// type index describing function signature
+    pub type_index: TypeIndex,
+}
+
+impl<'t> TryFromCtx<'t, SymbolKind> for HeapAllocationSiteSymbol {
+    type Error = Error;
+
+    fn try_from_ctx(this: &'t [u8], _: SymbolKind) -> Result<(Self, usize)> {
+        let mut buf = ParseBuffer::from(this);
+
+        let symbol = Self {
+            offset: buf.parse()?,
+            size: buf.parse()?,
+            type_index: buf.parse()?,
+        };
 
         Ok((symbol, buf.pos()))
     }
