@@ -241,6 +241,8 @@ pub enum SymbolData<'t> {
     FrameProcedure(FrameProcedureSymbol),
     /// Indirect call site information.
     CallSiteInfo(CallSiteInfoSymbol),
+    ///
+    Caller(CallerSymbol),
 }
 
 impl<'t> SymbolData<'t> {
@@ -284,6 +286,7 @@ impl<'t> SymbolData<'t> {
             Self::BasePointerRelative(data) => Some(data.name),
             Self::FrameProcedure(_) => None,
             Self::CallSiteInfo(_) => None,
+            Self::Caller(_) => None,
         }
     }
 }
@@ -355,6 +358,7 @@ impl<'t> TryFromCtx<'t> for SymbolData<'t> {
             }
             S_FRAMEPROC => SymbolData::FrameProcedure(buf.parse_with(kind)?),
             S_CALLSITEINFO => SymbolData::CallSiteInfo(buf.parse_with(kind)?),
+            S_CALLEES | S_CALLERS | S_INLINEES => SymbolData::Caller(buf.parse_with(kind)?),
             other => return Err(Error::UnimplementedSymbolKind(other)),
         };
 
@@ -2147,6 +2151,31 @@ impl TryFromCtx<'_, SymbolKind> for CallSiteInfoSymbol {
         let _padding = buf.parse::<u16>()?;
         let type_index: TypeIndex = buf.parse()?;
         let symbol = Self { offset, type_index };
+
+        Ok((symbol, buf.pos()))
+    }
+}
+
+/// Symbol kind `S_CALLEES`, `S_CALLERS`, or `S_INLINEES`
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallerSymbol {
+    ///
+    pub indices: Vec<TypeIndex>,
+}
+
+impl<'t> TryFromCtx<'t, SymbolKind> for CallerSymbol {
+    type Error = Error;
+
+    fn try_from_ctx(this: &'t [u8], _: SymbolKind) -> Result<(Self, usize)> {
+        let mut buf = ParseBuffer::from(this);
+
+        let count: u32 = buf.parse()?;
+        let mut indices = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            indices.push(buf.parse()?);
+        }
+
+        let symbol = Self { indices };
 
         Ok((symbol, buf.pos()))
     }
