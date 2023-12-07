@@ -249,6 +249,8 @@ pub enum SymbolData<'t> {
     EnvironmentBlock(EnvironmentBlockSymbol<'t>),
     /// A COFF section in a PE executable.
     Section(SectionSymbol<'t>),
+    /// A COFF group.
+    CoffGroup(CoffGroupSymbol<'t>),
 }
 
 impl<'t> SymbolData<'t> {
@@ -296,6 +298,7 @@ impl<'t> SymbolData<'t> {
             Self::HeapAllocationSite(_) => None,
             Self::EnvironmentBlock(_) => None,
             Self::Section(data) => Some(data.name),
+            Self::CoffGroup(data) => Some(data.name),
         }
     }
 }
@@ -371,6 +374,7 @@ impl<'t> TryFromCtx<'t> for SymbolData<'t> {
             S_HEAPALLOCSITE => SymbolData::HeapAllocationSite(buf.parse_with(kind)?),
             S_ENVBLOCK => SymbolData::EnvironmentBlock(buf.parse_with(kind)?),
             S_SECTION => SymbolData::Section(buf.parse_with(kind)?),
+            S_COFFGROUP => SymbolData::CoffGroup(buf.parse_with(kind)?),
             other => return Err(Error::UnimplementedSymbolKind(other)),
         };
 
@@ -2322,6 +2326,39 @@ impl<'t> TryFromCtx<'t, SymbolKind> for SectionSymbol<'t> {
             length,
             characteristics,
             name,
+        };
+
+        Ok((symbol, buf.pos()))
+    }
+}
+
+/// https://github.com/microsoft/microsoft-pdb/blob/805655a28bd8198004be2ac27e6e0290121a5e89/include/cvinfo.h#L4445
+/// A COFF group
+///
+/// Symbol kind `S_COFFGROUP`
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoffGroupSymbol<'t> {
+    ///
+    pub size: u32,
+    ///
+    pub characteristics: u32,
+    ///
+    pub symbol: PdbInternalSectionOffset,
+    ///
+    pub name: RawString<'t>,
+}
+
+impl<'t> TryFromCtx<'t, SymbolKind> for CoffGroupSymbol<'t> {
+    type Error = Error;
+
+    fn try_from_ctx(this: &'t [u8], kind: SymbolKind) -> Result<(Self, usize)> {
+        let mut buf = ParseBuffer::from(this);
+
+        let symbol = Self {
+            size: buf.parse()?,
+            characteristics: buf.parse()?,
+            symbol: buf.parse()?,
+            name: parse_symbol_name(&mut buf, kind)?,
         };
 
         Ok((symbol, buf.pos()))
