@@ -247,6 +247,8 @@ pub enum SymbolData<'t> {
     HeapAllocationSite(HeapAllocationSiteSymbol),
     /// Environment block split off from S_COMPILE2.
     EnvironmentBlock(EnvironmentBlockSymbol<'t>),
+    /// A COFF section in a PE executable.
+    Section(SectionSymbol<'t>),
 }
 
 impl<'t> SymbolData<'t> {
@@ -293,6 +295,7 @@ impl<'t> SymbolData<'t> {
             Self::Caller(_) => None,
             Self::HeapAllocationSite(_) => None,
             Self::EnvironmentBlock(_) => None,
+            Self::Section(data) => Some(data.name),
         }
     }
 }
@@ -367,6 +370,7 @@ impl<'t> TryFromCtx<'t> for SymbolData<'t> {
             S_CALLEES | S_CALLERS | S_INLINEES => SymbolData::Caller(buf.parse_with(kind)?),
             S_HEAPALLOCSITE => SymbolData::HeapAllocationSite(buf.parse_with(kind)?),
             S_ENVBLOCK => SymbolData::EnvironmentBlock(buf.parse_with(kind)?),
+            S_SECTION => SymbolData::Section(buf.parse_with(kind)?),
             other => return Err(Error::UnimplementedSymbolKind(other)),
         };
 
@@ -2271,6 +2275,54 @@ impl<'t> TryFromCtx<'t, SymbolKind> for EnvironmentBlockSymbol<'t> {
         }
 
         let symbol = Self { flags, fields };
+
+        Ok((symbol, buf.pos()))
+    }
+}
+
+/// https://github.com/microsoft/microsoft-pdb/blob/805655a28bd8198004be2ac27e6e0290121a5e89/include/cvinfo.h#L4432
+/// A COFF section in a PE executable
+///
+/// Symbol kind `S_SECTION`
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SectionSymbol<'t> {
+    /// Section number
+    pub section_number: u16,
+    /// Alignment of this section (power of 2)
+    pub alignment: u8,
+    ///
+    pub rva: u32,
+    ///
+    pub length: u32,
+    ///
+    pub characteristics: u32,
+    /// name
+    pub name: RawString<'t>,
+}
+
+impl<'t> TryFromCtx<'t, SymbolKind> for SectionSymbol<'t> {
+    type Error = Error;
+
+    fn try_from_ctx(this: &'t [u8], kind: SymbolKind) -> Result<(Self, usize)> {
+        let mut buf = ParseBuffer::from(this);
+
+        let section_number = buf.parse()?;
+        let alignment = buf.parse()?;
+        #[allow(non_snake_case)]
+        let _bReserved: u8 = buf.parse()?;
+        let rva = buf.parse()?;
+        let length = buf.parse()?;
+        let characteristics = buf.parse()?;
+        let name = parse_symbol_name(&mut buf, kind)?;
+
+        let symbol = Self {
+            section_number,
+            alignment,
+            rva,
+            length,
+            characteristics,
+            name,
+        };
 
         Ok((symbol, buf.pos()))
     }
