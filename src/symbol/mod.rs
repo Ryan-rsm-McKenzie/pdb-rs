@@ -245,6 +245,8 @@ pub enum SymbolData<'t> {
     Caller(CallerSymbol),
     /// Heap allocation site.
     HeapAllocationSite(HeapAllocationSiteSymbol),
+    /// Environment block split off from S_COMPILE2.
+    EnvironmentBlock(EnvironmentBlockSymbol<'t>),
 }
 
 impl<'t> SymbolData<'t> {
@@ -290,6 +292,7 @@ impl<'t> SymbolData<'t> {
             Self::CallSiteInfo(_) => None,
             Self::Caller(_) => None,
             Self::HeapAllocationSite(_) => None,
+            Self::EnvironmentBlock(_) => None,
         }
     }
 }
@@ -363,6 +366,7 @@ impl<'t> TryFromCtx<'t> for SymbolData<'t> {
             S_CALLSITEINFO => SymbolData::CallSiteInfo(buf.parse_with(kind)?),
             S_CALLEES | S_CALLERS | S_INLINEES => SymbolData::Caller(buf.parse_with(kind)?),
             S_HEAPALLOCSITE => SymbolData::HeapAllocationSite(buf.parse_with(kind)?),
+            S_ENVBLOCK => SymbolData::EnvironmentBlock(buf.parse_with(kind)?),
             other => return Err(Error::UnimplementedSymbolKind(other)),
         };
 
@@ -2210,6 +2214,63 @@ impl<'t> TryFromCtx<'t, SymbolKind> for HeapAllocationSiteSymbol {
             size: buf.parse()?,
             type_index: buf.parse()?,
         };
+
+        Ok((symbol, buf.pos()))
+    }
+}
+
+/// Environment block flags declared in [`EnvironmentBlockSymbol`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnvironmentBlockFlags {
+    /// reserved
+    pub rev: bool,
+}
+
+impl<'t> TryFromCtx<'t, Endian> for EnvironmentBlockFlags {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(this: &'t [u8], le: Endian) -> scroll::Result<(Self, usize)> {
+        let (value, size) = u8::try_from_ctx(this, le)?;
+
+        let flags = Self {
+            rev: value & 0b1 != 0,
+        };
+
+        Ok((flags, size))
+    }
+}
+
+/// https://github.com/microsoft/microsoft-pdb/blob/805655a28bd8198004be2ac27e6e0290121a5e89/include/cvinfo.h#L3372
+/// Environment block split off from S_COMPILE2
+///
+/// Symbol kind `S_ENVBLOCK`
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnvironmentBlockSymbol<'t> {
+    ///
+    pub flags: EnvironmentBlockFlags,
+    /// Sequence of zero-terminated strings
+    pub fields: Vec<RawString<'t>>,
+}
+
+impl<'t> TryFromCtx<'t, SymbolKind> for EnvironmentBlockSymbol<'t> {
+    type Error = Error;
+
+    fn try_from_ctx(this: &'t [u8], kind: SymbolKind) -> Result<(Self, usize)> {
+        let mut buf = ParseBuffer::from(this);
+
+        let flags = buf.parse()?;
+        let mut fields = Vec::new();
+        loop {
+            let string = parse_symbol_name(&mut buf, kind)?;
+            if !string.is_empty() {
+                fields.push(string);
+            } else {
+                break;
+            }
+        }
+
+        let symbol = Self { flags, fields };
 
         Ok((symbol, buf.pos()))
     }
